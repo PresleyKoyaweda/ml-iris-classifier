@@ -60,42 +60,67 @@ async def get_model_info():
         "metrics": metadata.get("metrics")
     }
 
+def _predict_one(request: IrisPredictionRequest) -> IrisPredictionResponse:
+    features = np.array([
+        request.sepal_length,
+        request.sepal_width,
+        request.petal_length,
+        request.petal_width
+    ]).reshape(1, -1)
+
+    prediction_idx = model.predict(features)[0]
+    prediction_proba = model.predict_proba(features)[0]
+
+    target_classes = metadata.get("target_classes", ["setosa", "versicolor", "virginica"])
+    prediction_class = target_classes[prediction_idx]
+
+    probability_dict = {
+        target_classes[i]: float(prob)
+        for i, prob in enumerate(prediction_proba)
+    }
+
+    logger.info(f"Prédiction: {prediction_class} avec confiance {max(prediction_proba):.2%}")
+
+    return IrisPredictionResponse(
+        prediction=prediction_class,
+        probability=probability_dict,
+        features={
+            "sepal_length": request.sepal_length,
+            "sepal_width": request.sepal_width,
+            "petal_length": request.petal_length,
+            "petal_width": request.petal_width
+        }
+    )
+
 @app.post("/predict", response_model=IrisPredictionResponse)
 async def predict(request: IrisPredictionRequest):
+    """
+    Prédire la classe d'iris
+
+    Exemple:
+    {
+        "sepal_length": 5.1,
+        "sepal_width": 3.5,
+        "petal_length": 1.4,
+        "petal_width": 0.2
+    }
+    """
     if model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
-    
+
     try:
-        features = np.array([
-            request.sepal_length,
-            request.sepal_width,
-            request.petal_length,
-            request.petal_width
-        ]).reshape(1, -1)
-        
-        prediction_idx = model.predict(features)[0]
-        prediction_proba = model.predict_proba(features)[0]
-        
-        target_classes = metadata.get("target_classes", ["setosa", "versicolor", "virginica"])
-        prediction_class = target_classes[prediction_idx]
-        
-        probability_dict = {
-            target_classes[i]: float(prob) 
-            for i, prob in enumerate(prediction_proba)
-        }
-        
-        logger.info(f"Prédiction: {prediction_class} avec confiance {max(prediction_proba):.2%}")
-        
-        return IrisPredictionResponse(
-            prediction=prediction_class,
-            probability=probability_dict,
-            features={
-                "sepal_length": request.sepal_length,
-                "sepal_width": request.sepal_width,
-                "petal_length": request.petal_length,
-                "petal_width": request.petal_width
-            }
-        )
+        return _predict_one(request)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Prediction error: {str(e)}")
+
+@app.post("/predict-batch", response_model=list[IrisPredictionResponse])
+async def predict_batch(requests: list[IrisPredictionRequest]):
+    """Prédire sur plusieurs exemples"""
+    if model is None:
+        raise HTTPException(status_code=503, detail="Model not loaded")
+
+    try:
+        return [_predict_one(request) for request in requests]
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Prediction error: {str(e)}")
 
