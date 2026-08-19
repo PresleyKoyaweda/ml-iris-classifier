@@ -48,6 +48,10 @@ resource "azurerm_application_insights" "ai" {
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   application_type    = "web"
+
+  lifecycle {
+    ignore_changes = [workspace_id]
+  }
 }
 
 resource "azurerm_key_vault" "kv" {
@@ -61,18 +65,20 @@ resource "azurerm_key_vault" "kv" {
     tenant_id = data.azurerm_client_config.current.tenant_id
     object_id = data.azurerm_client_config.current.object_id
 
-    key_permissions = ["Get", "List"]
+    key_permissions    = ["Get", "List"]
     secret_permissions = ["Get", "List", "Set"]
   }
 }
 
 resource "azurerm_machine_learning_workspace" "mlw" {
-  name                    = "mlws-${var.project_name}"
-  location                = azurerm_resource_group.rg.location
-  resource_group_name     = azurerm_resource_group.rg.name
-  application_insights_id = azurerm_application_insights.ai.id
-  key_vault_id            = azurerm_key_vault.kv.id
-  storage_account_id      = azurerm_storage_account.storage.id
+  name                          = "mlws-${var.project_name}"
+  location                      = azurerm_resource_group.rg.location
+  resource_group_name           = azurerm_resource_group.rg.name
+  application_insights_id       = azurerm_application_insights.ai.id
+  key_vault_id                  = azurerm_key_vault.kv.id
+  storage_account_id            = azurerm_storage_account.storage.id
+  container_registry_id         = azurerm_container_registry.acr.id
+  public_network_access_enabled = true
 
   identity {
     type = "SystemAssigned"
@@ -84,7 +90,26 @@ resource "azurerm_container_registry" "acr" {
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
   sku                 = "Standard"
-  admin_enabled       = true
+  admin_enabled       = false
+}
+
+# Le workspace ML pousse/tire ses images d'environnement via RBAC plutôt
+# qu'avec les identifiants admin partagés du registre.
+resource "azurerm_role_assignment" "mlw_acr_pull" {
+  scope                = azurerm_container_registry.acr.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_machine_learning_workspace.mlw.identity[0].principal_id
+}
+
+# Le workspace ML a besoin d'accéder à son propre Key Vault (secrets de
+# connexion aux datastores, clés de credentials, etc.).
+resource "azurerm_key_vault_access_policy" "mlw" {
+  key_vault_id = azurerm_key_vault.kv.id
+  tenant_id    = data.azurerm_client_config.current.tenant_id
+  object_id    = azurerm_machine_learning_workspace.mlw.identity[0].principal_id
+
+  key_permissions    = ["Get", "List"]
+  secret_permissions = ["Get", "List", "Set"]
 }
 
 output "workspace_name" {
