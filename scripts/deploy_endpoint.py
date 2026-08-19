@@ -1,4 +1,5 @@
 import os
+import shutil
 from pathlib import Path
 from azure.ai.ml import MLClient
 from azure.ai.ml.entities import ManagedOnlineEndpoint, ManagedOnlineDeployment, Model, Environment, CodeConfiguration
@@ -18,6 +19,14 @@ ml_client = MLClient(
     workspace_name=workspace_name
 )
 
+# Copier le modèle dans le répertoire code
+print("📋 Copie du modèle...")
+model_src = Path("src/train/outputs/model.pkl")
+model_dst = Path("src/api/model.pkl")
+if model_src.exists():
+    shutil.copy(model_src, model_dst)
+    print(f"✅ Modèle copié vers {model_dst}")
+
 # Créer l'environnement
 print("🔧 Création de l'environnement...")
 env = Environment(
@@ -31,9 +40,8 @@ print(f"✅ Environnement créé: {registered_env.name}:{registered_env.version}
 
 # Enregistrer le modèle
 print("📦 Enregistrement du modèle...")
-model_path = Path("src/train/outputs/model.pkl")
 model = Model(
-    path=str(model_path),
+    path=str(model_dst),
     name="iris-classifier",
     description="Iris Classification Model",
     type="custom_model"
