@@ -250,7 +250,7 @@ de démo.
 - **`conftest.py`** — fixtures partagées : `trained_model` entraîne un
   vrai modèle une fois par session de tests, **exactement là où** l'app et
   le scoring script l'attendent (pas de mock du modèle : on teste le vrai
-  pipeline train → serve).
+  pipeline train → serve). 
 - **`test_train.py`** — le training produit bien les fichiers attendus,
   les métadonnées ont la bonne forme, la performance dépasse un seuil
   minimal.
