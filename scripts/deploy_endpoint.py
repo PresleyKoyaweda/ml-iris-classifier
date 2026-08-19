@@ -59,8 +59,9 @@ endpoint = ManagedOnlineEndpoint(
 try:
     ml_client.online_endpoints.begin_create_or_update(endpoint).result()
     print("✅ Endpoint créé/mis à jour")
-except:
-    print("⚠️ Endpoint existe déjà")
+except Exception as e:
+    print(f"⚠️ Erreur lors de la création/mise à jour de l'endpoint: {e}")
+    raise
 
 # Créer le déploiement
 print("📤 Création du déploiement...")
