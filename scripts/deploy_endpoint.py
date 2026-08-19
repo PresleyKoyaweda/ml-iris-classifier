@@ -54,7 +54,7 @@ try:
 except:
     print("⚠️ Endpoint existe déjà")
 
-# Créer le déploiement AVEC le bon script de scoring
+# Créer le déploiement
 print("📤 Création du déploiement...")
 deployment = ManagedOnlineDeployment(
     name="iris-classifier-deployment",
@@ -62,7 +62,7 @@ deployment = ManagedOnlineDeployment(
     model=f"{registered_model.name}:{registered_model.version}",
     environment=f"{registered_env.name}:{registered_env.version}",
     code_configuration=CodeConfiguration(
-        code_id="src/api",
+        code="src/api",
         scoring_script="score.py"
     ),
     instance_type="Standard_F2s_v2",
