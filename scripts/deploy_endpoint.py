@@ -18,12 +18,12 @@ ml_client = MLClient(
     workspace_name=workspace_name
 )
 
-# Créer l'environnement
+# Créer l'environnement avec conda.yml
 print("🔧 Création de l'environnement...")
 env = Environment(
     name="iris-env",
     description="Environment for Iris classifier",
-    conda_file="src/train/requirements.txt",
+    conda_file="src/train/conda.yml",
     image="mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu20.04:latest"
 )
 registered_env = ml_client.environments.create_or_update(env)
@@ -54,15 +54,13 @@ try:
 except:
     print("⚠️ Endpoint existe déjà")
 
-# Créer le déploiement avec l'environnement
+# Créer le déploiement
 print("📤 Création du déploiement...")
 deployment = ManagedOnlineDeployment(
     name="iris-classifier-deployment",
     endpoint_name="iris-classifier",
     model=f"{registered_model.name}:{registered_model.version}",
     environment=f"{registered_env.name}:{registered_env.version}",
-    code_configuration="src",
-    scoring_script="train/train.py",
     instance_type="Standard_F2s_v2",
     instance_count=1
 )
