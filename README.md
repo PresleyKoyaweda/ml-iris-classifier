@@ -110,7 +110,9 @@ partie de la logique de `score.py` volontairement : les deux servent des
 contextes différents (dev local vs scoring script exécuté par Azure ML) et
 n'ont pas le même contrat de réponse.
 
-## Structure du projet
+## Structure du projet — rôle de chaque dossier et fichier
+
+Vue d'ensemble rapide, détail juste après :
 
 ```
 ├── notebooks/               Exploration de modèles (MLflow)
@@ -123,9 +125,171 @@ n'ont pas le même contrat de réponse.
 ├── terraform/
 │   └── main.tf                Infra Azure (RG, Storage, KV, ACR, ML Workspace)
 ├── tests/                     pytest : entraînement, scoring, API
-└── .github/workflows/
-    └── pipeline.yml           CI/CD : test → train → deploy
+├── .github/workflows/
+│   └── pipeline.yml           CI/CD : test → train → deploy
+├── requirements-dev.txt       Deps de dev (train + api + pytest, une seule commande)
+├── pytest.ini                 Config pytest (pythonpath vers src/train et src/api)
+└── .env                        Secrets locaux (jamais commité)
 ```
+
+Chaque dossier ci-dessous correspond à une **étape distincte** du cycle de vie
+d'un projet ML. C'est volontairement séparé ainsi : chaque étape a un cycle
+de vie, des dépendances et un public différents (un data scientist explore,
+une CI entraîne, Azure sert, un utilisateur clique).
+
+### `notebooks/` — Exploration, avant tout code de production
+
+- **`01_experimentation.ipynb`** — le seul endroit où on compare plusieurs
+  approches (ici RandomForest / GradientBoosting / SVM / régression
+  logistique) avec MLflow pour choisir un modèle. Rien de ce dossier n'est
+  importé ailleurs dans le projet : c'est un journal de décision, pas du
+  code réutilisé. Une fois le choix fait (RandomForest), la logique retenue
+  est **réécrite proprement** dans `src/train/train.py` — jamais le notebook
+  lui-même qui n'est pas déployable ni testable.
+- **`mlflow.db`** — base SQLite locale où le notebook logue ses runs
+  (gitignored : c'est un artefact d'exécution locale, pas du code).
+
+*Leçon à réutiliser* : un notebook sert à décider, pas à livrer. Le code qui
+part en production doit être un `.py` testable.
+
+### `src/train/` — Entraînement : la seule source de vérité du modèle
+
+- **`train.py`** — charge les données, entraîne, évalue, logue dans MLflow,
+  sauvegarde `model.pkl` + `metadata.json`. Point clé : la fonction
+  `train(output_dir)` est **découplée** de `main()` (qui gère juste le run
+  MLflow et l'affichage) — c'est ce qui permet aux tests de l'appeler
+  directement, avec un `output_dir` de leur choix.
+- **`requirements.txt`** — dépendances **strictement nécessaires pour
+  entraîner** (scikit-learn, mlflow, pandas...). Ne contient jamais de
+  dépendances de serving (FastAPI, Streamlit) : l'environnement
+  d'entraînement n'est pas l'environnement de serving.
+- **`conda.yml`** — les mêmes dépendances, au format conda. C'est ce
+  fichier (pas `requirements.txt`) que Azure ML utilise pour construire
+  l'image du conteneur qui exécute `score.py` en production.
+- **`outputs/`** (généré, gitignored) — `model.pkl` + `metadata.json`,
+  jamais commités : ce sont des artefacts binaires reproductibles à partir
+  du code, pas du code lui-même. Ils transitent par les artefacts GitHub
+  Actions (`actions/upload-artifact`) entre le job `train` et le job
+  `deploy`.
+
+*Leçon à réutiliser* : séparer "ce qui entraîne" de "ce qui sert", même en
+tant que dépendances — c'est ce qui a évité un `requirements.txt` d'API
+gonflé de dépendances de training inutiles (bug corrigé dans ce projet).
+
+### `src/api/` — Deux façons de servir le même modèle, deux contrats différents
+
+- **`score.py`** — le **contrat imposé par Azure ML Managed Online
+  Endpoint** : une fonction `init()` (charge le modèle une fois au
+  démarrage du conteneur) et `run(data)` (appelée à chaque requête). C'est
+  ce fichier, et uniquement lui, qui tourne réellement dans Azure une fois
+  déployé.
+- **`main.py`** — un serveur FastAPI de **développement local**, qui
+  charge `model.pkl` directement depuis `src/train/outputs/`. Pratique pour
+  itérer vite sans passer par Azure, avec un contrat de réponse plus riche
+  (nom de classe, dict de probabilités) que `score.py` (index brut).
+- **`requirements.txt`** — dépendances de serving (fastapi, uvicorn,
+  pydantic) : encore une fois, pas les dépendances de training.
+- **`model.pkl`** (généré, gitignored) — copié ici par
+  `deploy_endpoint.py` juste avant déploiement, pour que `score.py` et
+  `model.pkl` partent ensemble dans le même `code_configuration` Azure ML.
+
+*Leçon à réutiliser* : le "scoring script" imposé par une plateforme
+managée (Azure ML, SageMaker, Vertex AI...) a presque toujours un contrat
+d'interface rigide (`init`/`run` ici) — ne pas essayer d'y faire porter
+aussi les besoins de dev local ou d'un contrat API plus riche : séparer.
+
+### `src/webapp/` — L'interface qui rend le modèle réellement utilisable
+
+- **`app.py`** — Streamlit. Ne contient **aucune logique ML** : il
+  collecte les 4 features via l'UI, appelle l'URL HTTPS du endpoint Azure
+  avec la clé d'API, affiche la réponse. C'est un client HTTP comme un
+  autre, découplé du reste — il pourrait tout aussi bien appeler
+  n'importe quel modèle exposé en REST.
+- **`requirements.txt`** — streamlit, requests, python-dotenv : rien
+  d'autre (ni scikit-learn, ni mlflow — ce dossier n'a jamais besoin de
+  charger un modèle localement).
+
+*Leçon à réutiliser* : l'interface finale consomme le modèle **via son API
+de production**, jamais en chargeant le `.pkl` en local — sinon on teste
+un chemin différent de celui utilisé par les vrais utilisateurs.
+
+### `scripts/` — Automatisation ponctuelle, hors du cycle entraînement/serving
+
+- **`deploy_endpoint.py`** — orchestre le SDK `azure-ai-ml` : enregistre
+  l'environnement conda, enregistre le modèle, crée/actualise le endpoint
+  et son déploiement. C'est le pont entre "j'ai un `model.pkl` local" et
+  "il existe une URL Azure qui répond".
+
+*Leçon à réutiliser* : garder ce genre de script d'orchestration séparé du
+code applicatif (`src/`) — c'est un script d'exploitation, appelé par la CI
+ou manuellement, pas importé par autre chose.
+
+### `terraform/` — L'infrastructure comme du code versionné
+
+- **`main.tf`** — tout ce que Azure ML a besoin pour exister : Resource
+  Group, Storage Account, Key Vault (+ politiques d'accès), Application
+  Insights, Container Registry (RBAC), Workspace ML (identité managée),
+  avec les `output` nécessaires (nom du workspace, URL de l'ACR...) pour
+  que `deploy_endpoint.py`/la CI sachent où déployer.
+- **`.terraform.lock.hcl`** — versions exactes des providers, pour des
+  `apply` reproductibles d'une machine à l'autre (à committer, contrairement
+  à `.terraform/`).
+- **`.terraform/`, `terraform.tfstate*`** (gitignored) — cache local des
+  providers et **état réel de l'infrastructure**. Le state n'est pas du
+  code : il contient parfois des données sensibles et doit en théorie vivre
+  dans un backend distant partagé (limite connue de ce projet, voir plus
+  bas).
+
+*Leçon à réutiliser* : toute ressource cloud créée "à la main" une fois est
+une ressource qu'on ne saura plus reproduire à la prochaine mission —
+Terraform (ou équivalent) dès le premier provisioning, même pour un projet
+de démo.
+
+### `tests/` — Le filet de sécurité qui rend les changements sûrs
+
+- **`conftest.py`** — fixtures partagées : `trained_model` entraîne un
+  vrai modèle une fois par session de tests, **exactement là où** l'app et
+  le scoring script l'attendent (pas de mock du modèle : on teste le vrai
+  pipeline train → serve).
+- **`test_train.py`** — le training produit bien les fichiers attendus,
+  les métadonnées ont la bonne forme, la performance dépasse un seuil
+  minimal.
+- **`test_score.py`** — le contrat Azure ML (`init`/`run`) fonctionne,
+  y compris sur un payload invalide (doit renvoyer une erreur structurée,
+  pas planter).
+- **`test_api.py`** — chaque route FastAPI répond correctement. C'est ce
+  test qui a détecté que `/predict-batch` avait disparu du code (régression
+  silencieuse d'un précédent commit) — la preuve concrète de l'utilité de
+  cette couche.
+
+*Leçon à réutiliser* : tester avec un **vrai modèle entraîné pendant le
+test**, pas un mock — un mock aurait laissé passer le bug `/predict-batch`
+et ne dit rien sur la validité réelle du pipeline.
+
+### `.github/workflows/` — CI/CD : automatiser le chemin du code à Azure
+
+- **`pipeline.yml`** — trois jobs enchaînés à chaque push sur `src/**` :
+  `test` (pytest, bloque la suite si rouge) → `train` (génère et publie
+  `model.pkl`/`metadata.json` en artefact GitHub) → `deploy` (télécharge
+  l'artefact, lance `deploy_endpoint.py` avec des secrets Azure). Chaque job
+  tourne dans un environnement propre et ne réutilise que ce que le job
+  précédent lui a explicitement transmis (artefact), jamais un état de
+  filesystem implicite.
+
+*Leçon à réutiliser* : la CI doit reproduire *exactement* les commandes
+qu'un humain lancerait en local (`pytest`, `python train.py`,
+`python deploy_endpoint.py`) — pas une logique parallèle qui diverge avec le
+temps.
+
+### Fichiers à la racine
+
+| Fichier | Rôle |
+|---|---|
+| `requirements-dev.txt` | Une seule commande pour tout installer en dev (`-r src/train/requirements.txt -r src/api/requirements.txt` + pytest/httpx) |
+| `pytest.ini` | Déclare `src/train` et `src/api` sur le `pythonpath` pour que les tests importent `train`, `main`, `score` sans installer le projet en package |
+| `.gitignore` | Exclut artefacts générés (`outputs/`, `*.pkl`, `mlruns/`), state Terraform, `.env`, venv |
+| `.env` | Secrets locaux (jamais commité — voir section variables d'environnement) |
+| `README.md` | Ce fichier |
 
 ## Démarrage local
 
@@ -204,6 +368,29 @@ Variables disponibles : `project_name` (défaut `ml-demo`), `environment`
 
 En CI, `AZURE_SUBSCRIPTION_ID/TENANT_ID/CLIENT_ID/CLIENT_SECRET` sont des
 secrets GitHub Actions (`Settings → Secrets and variables → Actions`).
+
+## Grille de reproductibilité pour un prochain projet ML
+
+Le pattern générique derrière ce projet, indépendant d'Iris/Azure/Streamlit —
+à recréer dès le premier jour d'un prochain projet, dans cet ordre :
+
+| # | Besoin générique | Ce qu'on met en place | Exemple ici |
+|---|---|---|---|
+| 1 | Explorer sans polluer le code de prod | Un notebook + tracking d'expériences (MLflow ou équivalent), jamais importé ailleurs | `notebooks/01_experimentation.ipynb` |
+| 2 | Un entraînement reproductible et testable | Une fonction `train(output_dir) -> metadata`, séparée du `main()`/CLI, avec run de tracking protégé (`with ...:`) | `src/train/train.py` |
+| 3 | Séparer les dépendances par étape | Un `requirements.txt` (ou équivalent) **par dossier**, jamais un seul fichier partagé entre training/serving/UI | `src/train/`, `src/api/`, `src/webapp/` |
+| 4 | Un contrat de serving conforme à la plateforme cible | Respecter le contrat imposé (`init`/`run`, handler Lambda, etc.) dans un fichier dédié, sans y mélanger les besoins de dev local | `src/api/score.py` vs `src/api/main.py` |
+| 5 | Un filet de tests avant tout changement | Tests qui entraînent/chargent un **vrai** modèle (pas de mock du cœur du pipeline), sur les 3 couches : training, scoring, API | `tests/` |
+| 6 | Une infra reproductible, pas cliquée à la main | Infra as Code dès la première ressource cloud (Terraform/Bicep/Pulumi), avec RBAC plutôt que credentials partagés | `terraform/main.tf` |
+| 7 | Un pipeline qui fait ce qu'un humain ferait | CI/CD qui enchaîne test → train → deploy avec les mêmes commandes qu'en local, gated sur les tests | `.github/workflows/pipeline.yml` |
+| 8 | Un moyen réel d'utiliser le résultat | Un client (webapp, CLI, bot...) qui appelle l'**API de production**, jamais le modèle chargé en local | `src/webapp/app.py` |
+| 9 | Une doc qui explique le *pourquoi*, pas juste le *quoi* | Un README avec diagramme d'architecture + rôle de chaque dossier + limites connues assumées | ce fichier |
+
+Point de départ concret pour la prochaine mission : copier la structure de
+dossiers (`notebooks/`, `src/<étape>/`, `scripts/`, `<iac>/`, `tests/`,
+`.github/workflows/`), écrire le tableau ci-dessus avec les technologies
+réelles du nouveau projet, puis avancer étape par étape dans l'ordre —
+chaque étape doit être testée/validée avant de construire la suivante.
 
 ## Limites connues
 
