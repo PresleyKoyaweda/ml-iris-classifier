@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from azure.ai.ml import MLClient
-from azure.ai.ml.entities import ManagedOnlineEndpoint, ManagedOnlineDeployment, Model, Environment
+from azure.ai.ml.entities import ManagedOnlineEndpoint, ManagedOnlineDeployment, Model, Environment, CodeConfiguration
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 
@@ -18,7 +18,7 @@ ml_client = MLClient(
     workspace_name=workspace_name
 )
 
-# Créer l'environnement avec conda.yml
+# Créer l'environnement
 print("🔧 Création de l'environnement...")
 env = Environment(
     name="iris-env",
@@ -54,13 +54,17 @@ try:
 except:
     print("⚠️ Endpoint existe déjà")
 
-# Créer le déploiement
+# Créer le déploiement AVEC le bon script de scoring
 print("📤 Création du déploiement...")
 deployment = ManagedOnlineDeployment(
     name="iris-classifier-deployment",
     endpoint_name="iris-classifier",
     model=f"{registered_model.name}:{registered_model.version}",
     environment=f"{registered_env.name}:{registered_env.version}",
+    code_configuration=CodeConfiguration(
+        code_id="src/api",
+        scoring_script="score.py"
+    ),
     instance_type="Standard_F2s_v2",
     instance_count=1
 )
