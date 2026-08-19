@@ -4,7 +4,6 @@ Script d'entraînement du modèle de classification Iris
 Entraîne un RandomForest et sauvegarde le modèle + métadonnées
 """
 
-import os
 import json
 from pathlib import Path
 from sklearn.datasets import load_iris
@@ -18,10 +17,20 @@ def main():
     print("=" * 60)
     print("🤖 ENTRAÎNEMENT DU MODÈLE IRIS CLASSIFIER")
     print("=" * 60)
-    
-    # MLflow tracking
-    mlflow.start_run()
-    
+
+    with mlflow.start_run():
+        train(Path(__file__).parent / "outputs")
+
+    print("\n" + "=" * 60)
+    print("✅ ENTRAÎNEMENT TERMINÉ!")
+    print("=" * 60)
+
+
+def train(output_dir: Path) -> dict:
+    """Entraîne le modèle et sauvegarde model.pkl + metadata.json dans output_dir.
+
+    Retourne les métadonnées (utile pour les tests).
+    """
     # ============================================================
     # 1. CHARGER LES DONNÉES
     # ============================================================
@@ -90,8 +99,7 @@ def main():
     # 6. SAUVEGARDER LE MODÈLE
     # ============================================================
     print("\n💾 Étape 6: Sauvegarde du modèle...")
-    output_dir = Path("outputs")
-    output_dir.mkdir(exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
     
     model_path = output_dir / "model.pkl"
     joblib.dump(model, model_path)
@@ -119,20 +127,14 @@ def main():
         json.dump(metadata, f, indent=2)
     print(f"   ✓ Métadonnées sauvegardées: {metadata_path}")
     
-    # ============================================================
-    # 8. FIN
-    # ============================================================
-    mlflow.end_run()
-    
-    print("\n" + "=" * 60)
-    print("✅ ENTRAÎNEMENT TERMINÉ!")
-    print("=" * 60)
     print(f"\n📁 Fichiers générés:")
     print(f"   - {model_path}")
     print(f"   - {metadata_path}")
     print(f"\n🎯 Performance:")
     print(f"   - Accuracy:  {metrics['accuracy']:.2%}")
     print(f"   - F1-Score:  {metrics['f1']:.2%}")
+
+    return metadata
 
 if __name__ == "__main__":
     main()
