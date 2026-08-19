@@ -26,14 +26,12 @@ jobs:
         python -m pip install --upgrade pip
         pip install azure-ai-ml azure-identity python-dotenv
     
-    - name: Azure Login
-      uses: azure/login@v1
-      with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
-    
     - name: Deploy Endpoint
       env:
         AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
         AZURE_ML_WORKSPACE_NAME: mlw-ml-demo-v2
         AZURE_ML_RESOURCE_GROUP: rg-ml-demo-dev
       run: python scripts/deploy_endpoint.py
