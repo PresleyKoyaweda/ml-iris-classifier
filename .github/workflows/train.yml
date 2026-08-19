@@ -26,7 +26,9 @@ jobs:
         pip install -r src/train/requirements.txt
     
     - name: Train model
-      run: cd src/train && python train.py
+      run: |
+        cd src/train
+        python train.py
     
     - name: Upload model artifacts
       uses: actions/upload-artifact@v4
