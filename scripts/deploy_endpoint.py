@@ -1,6 +1,7 @@
 import os
+from pathlib import Path
 from azure.ai.ml import MLClient
-from azure.ai.ml.entities import ManagedOnlineEndpoint, ManagedOnlineDeployment
+from azure.ai.ml.entities import ManagedOnlineEndpoint, ManagedOnlineDeployment, Model
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 
@@ -17,7 +18,20 @@ ml_client = MLClient(
     workspace_name=workspace_name
 )
 
+# Enregistrer le modèle dans Azure ML
+print("📦 Enregistrement du modèle...")
+model_path = Path("src/train/outputs/model.pkl")
+model = Model(
+    path=str(model_path),
+    name="iris-classifier",
+    description="Iris Classification Model",
+    type="custom_model"
+)
+registered_model = ml_client.models.create_or_update(model)
+print(f"✅ Modèle enregistré: {registered_model.name}:{registered_model.version}")
+
 # Créer l'endpoint
+print("🔧 Création de l'endpoint...")
 endpoint = ManagedOnlineEndpoint(
     name="iris-classifier",
     description="Iris Classification Endpoint"
@@ -30,15 +44,15 @@ except:
     print("⚠️ Endpoint existe déjà")
 
 # Créer le déploiement
+print("📤 Création du déploiement...")
 deployment = ManagedOnlineDeployment(
     name="iris-classifier-deployment",
     endpoint_name="iris-classifier",
-    model="iris-classifier:1",
+    model=f"{registered_model.name}:{registered_model.version}",
     instance_type="Standard_F2s_v2",
     instance_count=1
 )
 
-print("📤 Création du déploiement...")
 ml_client.online_deployments.begin_create_or_update(deployment).result()
 print("✅ Déploiement créé!")
 
