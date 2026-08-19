@@ -1,0 +1,9 @@
+# Dépendances de développement/test.
+# Installe aussi les dépendances runtime du training et de l'API.
+-r src/train/requirements.txt
+-r src/api/requirements.txt
+
+pytest==9.1.1
+# Pinné <0.28: starlette 0.27.x (via fastapi==0.104.1) instancie encore
+# httpx.Client(app=...), retiré dans httpx 0.28.
+httpx==0.27.2

@@ -30,3 +30,6 @@ terraform.tfstate*
 
 # OS
 .DS_Store
+
+# Virtualenv
+.venv/
