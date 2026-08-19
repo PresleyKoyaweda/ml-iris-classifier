@@ -67,7 +67,7 @@ resource "azurerm_key_vault" "kv" {
 }
 
 resource "azurerm_machine_learning_workspace" "mlw" {
-  name                    = "mlw-${var.project_name}"
+  name                    = "mlws-${var.project_name}"
   location                = azurerm_resource_group.rg.location
   resource_group_name     = azurerm_resource_group.rg.name
   application_insights_id = azurerm_application_insights.ai.id
