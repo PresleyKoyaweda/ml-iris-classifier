@@ -23,8 +23,28 @@ endpoint = ManagedOnlineEndpoint(
     description="Iris Classification Endpoint"
 )
 
-print("Création de l'endpoint...")
-ml_client.online_endpoints.begin_create_or_update(endpoint).result()
-print("✅ Endpoint créé!")
+try:
+    ml_client.online_endpoints.begin_create_or_update(endpoint).result()
+    print("✅ Endpoint créé/mis à jour")
+except:
+    print("⚠️ Endpoint existe déjà")
 
-print("\n📍 Endpoint URL: ", ml_client.online_endpoints.get("iris-classifier").scoring_uri)
+# Créer le déploiement
+deployment = ManagedOnlineDeployment(
+    name="iris-classifier-deployment",
+    endpoint_name="iris-classifier",
+    model="iris-classifier:1",
+    instance_type="Standard_F2s_v2",
+    instance_count=1
+)
+
+print("📤 Création du déploiement...")
+ml_client.online_deployments.begin_create_or_update(deployment).result()
+print("✅ Déploiement créé!")
+
+# Mettre à jour le trafic
+endpoint = ml_client.online_endpoints.get("iris-classifier")
+endpoint.traffic = {"iris-classifier-deployment": 100}
+ml_client.online_endpoints.begin_create_or_update(endpoint).result()
+
+print(f"✅ Endpoint URL: {endpoint.scoring_uri}")
